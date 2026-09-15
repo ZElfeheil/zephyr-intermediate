@@ -4,73 +4,55 @@
 LOG_MODULE_REGISTER(demo, LOG_LEVEL_DBG);
 
 #define STACK_SIZE 1024
+#define PRIO_WORKER 5
+#define ITERATIONS 1000U
+#define WORKER_COUNT 2U
 
-#define PRIO_LOW  7
-#define PRIO_MED  5
-#define PRIO_HIGH 3
-#define PRIO_COOP -1
+/* Shared counter protected by counter_mutex. */
+static uint32_t shared_counter;
+K_MUTEX_DEFINE(counter_mutex);
+/* Define semaphore*/
+static K_SEM_DEFINE(workers_done, 0, WORKER_COUNT);
+/*Define worker thread stack size*/
+K_THREAD_STACK_DEFINE(worker_a_stack, STACK_SIZE);
+K_THREAD_STACK_DEFINE(worker_b_stack, STACK_SIZE);
 
-#define BUSY_WORK_CYCLES 100000U
+static struct k_thread worker_a;
+static struct k_thread worker_b;
 
-void thread_low_fn(void *p1, void *p2, void *p3)
+void increment_counter(void *p1, void *p2, void *p3)
 {
-    int step = 0;
-    while (1) {
-        LOG_INF("T_LOW running: step=%d, uptime=%u ms",
-        step++, k_uptime_get_32());
-        k_msleep(300);
+    const char *name = p1;
+
+    for (uint32_t i = 0U; i < ITERATIONS; i++) {
+        k_mutex_lock(&counter_mutex, K_FOREVER);
+        shared_counter++;
+        k_mutex_unlock(&counter_mutex);
     }
+
+    LOG_INF("%s finished", name);
+    k_sem_give(&workers_done);
 }
-
-void thread_med_fn(void *p1, void *p2, void *p3)
-{
-    int step = 0;
-    while (1) {
-        LOG_INF("T_MED running: step=%d, uptime=%u ms",
-        step++, k_uptime_get_32());
-        k_msleep(200);
-    }
-}
-
-void thread_high_fn(void *p1, void *p2, void *p3)
-{
-    int step = 0;
-    while (1) {
-        LOG_INF("T_HIGH running: step=%d, uptime=%u ms",
-        step++, k_uptime_get_32());
-        k_msleep(100);
-    }
-}
-
-void thread_coop_fn(void *p1, void *p2, void *p3)
-{
-    uint32_t batch = 0U;
-
-    while (1) {
-        for (int iteration = 0; iteration < 5; iteration++) {
-            volatile uint32_t work = 0U;
-
-            for (uint32_t cycle = 0U; cycle < BUSY_WORK_CYCLES; cycle++) {
-                work += cycle;
-            }
-        }
-
-        LOG_INF("T_COOP completed batch %u; yielding", batch++);
-        k_msleep(1);
-        k_yield();
-    }
-}
-
-K_THREAD_DEFINE(thread_a, STACK_SIZE, thread_low_fn,
-                NULL, NULL, NULL, PRIO_LOW, 0, 0);
-K_THREAD_DEFINE(thread_b, STACK_SIZE, thread_med_fn,
-                NULL, NULL, NULL, PRIO_MED, 0, 0);
-K_THREAD_DEFINE(thread_c, STACK_SIZE, thread_high_fn,
-                NULL, NULL, NULL, PRIO_HIGH, 0, 0);
-K_THREAD_DEFINE(thread_coop, STACK_SIZE, thread_coop_fn,
-                NULL, NULL, NULL, PRIO_COOP, 0, 0);
 
 int main(void)
 {
+    const uint32_t expected = WORKER_COUNT * ITERATIONS;
+
+    LOG_INF("=== Mutex-protected counter demo ===");
+    LOG_INF("Two priority-%d threads each increment %u times", PRIO_WORKER,
+            ITERATIONS);
+
+    k_thread_create(&worker_a, worker_a_stack, STACK_SIZE, increment_counter,
+                    "worker A", NULL, NULL, PRIO_WORKER, 0, K_NO_WAIT);
+    k_thread_create(&worker_b, worker_b_stack, STACK_SIZE, increment_counter,
+                    "worker B", NULL, NULL, PRIO_WORKER, 0, K_NO_WAIT);
+
+    k_sem_take(&workers_done, K_FOREVER);
+    k_sem_take(&workers_done, K_FOREVER);
+
+    LOG_INF("Expected counter: %u", expected);
+    LOG_INF("Actual counter:   %u", shared_counter);
+    LOG_INF("Lost updates:     %u", expected - shared_counter);
+
     return 0;
 }
