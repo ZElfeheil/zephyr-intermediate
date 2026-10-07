@@ -2,7 +2,7 @@
 #include <zephyr/logging/log.h>
 #include <zephyr/zbus/zbus.h>
 #include <zephyr/task_wdt/task_wdt.h>
-#include <zephyr/sys/printk.h>
+#include <zephyr/logging/log_ctrl.h>
 #include <zephyr/sys/reboot.h>
 #include <errno.h>
 #include <zephyr/sys/atomic.h>
@@ -64,8 +64,10 @@ static void health_thread_fn(void *p1, void *p2, void *p3)
 /* Called in timer interrupt context: do not sleep or block here. */
 static void watchdog_timeout_cb(int channel_id, void *user_data)
 {
-    printk("[WATCHDOG] callback triggered: task=%s channel=%d tick=%u; resetting\n",
-           (const char *)user_data, channel_id, k_uptime_get_32());
+    LOG_ERR("[WATCHDOG] callback triggered: task=%s channel=%d tick=%u; resetting",
+            (const char *)user_data, channel_id, k_uptime_get_32());
+    /* Flush deferred logs before resetting the board. */
+    log_panic();
     sys_reboot(SYS_REBOOT_COLD);
 }
 
